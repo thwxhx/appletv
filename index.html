@@ -1,0 +1,438 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FootyFeed · Stream Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #0b0e1a;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+
+        /* player container – full viewport */
+        .player-container {
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        .player-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        /* loading overlay */
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 20px 32px;
+            border-radius: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            letter-spacing: 0.3px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+        }
+
+        /* error box */
+        .error {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.92);
+            padding: 28px 24px;
+            border-radius: 16px;
+            max-width: 90%;
+            width: 460px;
+            border: 1px solid rgba(255, 100, 100, 0.25);
+            backdrop-filter: blur(6px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            color: #f0f0f0;
+            text-align: center;
+            line-height: 1.6;
+        }
+        .error p { margin: 8px 0; }
+        .error a {
+            color: #60a5fa;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .error a:hover { text-decoration: underline; }
+        .retry-button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: background 0.2s;
+        }
+        .retry-button:hover { background: #2563eb; }
+
+        /* ----- MODAL (popup) – ORIGINAL DESIGN (exactly as first code) ----- */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            backdrop-filter: blur(6px);
+            background: rgba(0, 0, 0, 0.4);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            animation: fadeIn 0.5s ease;
+        }
+        .modal-content {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 30px 25px;
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+            color: #f3f4f6;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(12px);
+            transform: scale(0.95);
+            animation: scaleIn 0.4s ease forwards;
+        }
+        .modal-content h2 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #facc15;
+            margin-bottom: 16px;
+        }
+        .modal-content p {
+            font-size: 16px;
+            color: #d1d5db;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        .modal-content strong {
+            color: #fff;
+        }
+        .modal-content button {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: none;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        #joinButton {
+            background: linear-gradient(to right, #3b82f6, #06b6d4);
+            color: #fff;
+            font-weight: 500;
+        }
+        #joinButton:hover {
+            background: linear-gradient(to right, #2563eb, #0891b2);
+            transform: scale(1.02);
+        }
+        #closeButton {
+            background: rgba(255, 255, 255, 0.1);
+            color: #f3f4f6;
+        }
+        #closeButton:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: scale(1.02);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes scaleIn {
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        @media (max-width: 480px) {
+            .modal-content h2 { font-size: 20px; }
+            .modal-content p { font-size: 15px; }
+            .loading { font-size: 15px; padding: 16px 24px; }
+            .error { width: 92%; padding: 20px 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    
+    <div class="loading" id="loading">Loading stream data …</div>
+
+    
+    <div class="player-container" id="playerContainer"></div>
+
+    <script>
+        (function() {
+            "use strict";
+
+            let streamsData = {};
+
+            // ----- helpers -----
+            function getQueryParam(name) {
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.get(name);
+            }
+
+            // parse JS object from string (robust)
+            function parseJavaScriptObject(jsString) {
+                try {
+                    const objectStart = jsString.indexOf('{');
+                    const objectEnd = jsString.lastIndexOf('}');
+                    if (objectStart === -1 || objectEnd === -1) throw new Error('No object found');
+                    let objectStr = jsString.substring(objectStart, objectEnd + 1);
+                    objectStr = objectStr.replace(/'/g, '"');
+                    objectStr = objectStr.replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)(\s*:)/g, '$1"$2"$3');
+                    return JSON.parse(objectStr);
+                } catch (_) {
+                    try {
+                        const match = jsString.match(/const\s+streams\s*=\s*(\{[\s\S]*?\});/);
+                        if (match) {
+                            const getStreams = new Function('return ' + match[1]);
+                            return getStreams();
+                        }
+                    } catch (__) {}
+                    return null;
+                }
+            }
+
+            // fetch streams from remote JS
+            async function fetchStreams() {
+                try {
+                    const url = 'https://footyfeed-4vg.pages.dev/iooss.json?t=' + Date.now();
+                    const resp = await fetch(url, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/javascript, text/javascript, */*' },
+                        cache: 'no-store'
+                    });
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const text = await resp.text();
+                    const parsed = parseJavaScriptObject(text);
+                    if (parsed && typeof parsed === 'object') {
+                        streamsData = parsed;
+                        return true;
+                    }
+                    return false;
+                } catch (e) {
+                    console.warn('fetchStreams error:', e);
+                    // fallback attempt
+                    try {
+                        const alt = await fetch('https://footyfeed-4vg.pages.dev/iooss.json', { cache: 'reload' });
+                        if (alt.ok) {
+                            const txt = await alt.text();
+                            const p = parseJavaScriptObject(txt);
+                            if (p && typeof p === 'object') {
+                                streamsData = p;
+                                return true;
+                            }
+                        }
+                    } catch (_) {}
+                    return false;
+                }
+            }
+
+            // inject iframe
+            function loadIframe(channelId) {
+                const url = streamsData[channelId];
+                if (!url) {
+                    document.getElementById('loading').style.display = 'none';
+                    const errDiv = document.createElement('div');
+                    errDiv.className = 'error';
+                    errDiv.innerHTML = `
+                        <p>❌ Channel "<strong>${channelId}</strong>" not found</p>
+                        <p>Available: ${Object.keys(streamsData).sort().join(', ')}</p>
+                        <p style="margin-top:8px;">
+                            <a href="?id=PL1">PL1</a> · 
+                            <a href="?id=PL2">PL2</a> · 
+                            <a href="?id=UFC">UFC</a> · 
+                            <a href="?id=CF">CF</a>
+                        </p>
+                        <button class="retry-button" onclick="location.reload()">↻ Retry</button>
+                    `;
+                    document.body.appendChild(errDiv);
+                    return;
+                }
+
+                console.log('Loading stream:', channelId, url);
+                document.getElementById('loading').style.display = 'none';
+
+                const iframe = document.createElement('iframe');
+                iframe.setAttribute('frameborder', '0');
+                iframe.setAttribute('allow', 'encrypted-media; autoplay; fullscreen; picture-in-picture');
+                iframe.setAttribute('allowfullscreen', 'true');
+                iframe.setAttribute('scrolling', 'yes');
+                iframe.setAttribute('referrerpolicy', 'no-referrer');
+                iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+                iframe.src = url;
+
+                iframe.onerror = function() {
+                    const container = document.getElementById('playerContainer');
+                    container.innerHTML = '';
+                    const err = document.createElement('div');
+                    err.className = 'error';
+                    err.innerHTML = `
+                        <p>⚠️ Stream failed to load</p>
+                        <p>${url}</p>
+                        <button class="retry-button" onclick="location.reload()">Refresh</button>
+                    `;
+                    container.appendChild(err);
+                };
+
+                document.getElementById('playerContainer').appendChild(iframe);
+            }
+
+            // ----- AD SCRIPT (loaded after popup is closed) -----
+            function loadAdScript() {
+                if (document.getElementById('ad-script-tag')) return;
+                const script = document.createElement('script');
+                script.id = 'ad-script-tag';
+                script.src = 'https://matcheslinkz.pages.dev/mine-ad.js';
+                script.async = true;
+                script.defer = true;
+                script.onload = () => console.log('Ad script loaded.');
+                script.onerror = () => console.warn('Ad script failed to load.');
+                document.head.appendChild(script);
+            }
+
+            // ----- show confirm() dialog (once per session) -----
+            function showConfirmDialog() {
+                if (!sessionStorage.getItem('confirmShown')) {
+                    if (confirm("Join For More Links!!")) {
+                        window.location.href = "https://t.me/+RSjqR7v1laE1ZTJl";
+                    }
+                    sessionStorage.setItem('confirmShown', 'true');
+                }
+            }
+
+            // ----- MODAL (popup) – ALWAYS SHOWS (no session check) -----
+            function showPopup() {
+                // Remove any existing popup to avoid duplicates
+                const existing = document.getElementById('popup-container');
+                if (existing) existing.remove();
+
+                const container = document.createElement('div');
+                container.id = 'popup-container';
+                document.body.appendChild(container);
+
+                const modal = document.createElement('div');
+                modal.className = 'modal';
+                modal.innerHTML = `
+                    <div class="modal-content">
+                        <h2>Support Us! 🙏</h2>
+                        <p>Join our Telegram channel <br><strong>@FootyFeed</strong> for live updates &amp; streams</p>
+                        <button id="joinButton">✅ Join Now &amp; Support</button>
+                        <button id="closeButton">❌ Already Joined</button>
+                    </div>
+                `;
+                container.appendChild(modal);
+
+                function closeModal() {
+                    modal.remove();
+                    container.remove();
+                    // load ad script after popup closes
+                    loadAdScript();
+                }
+
+                modal.querySelector('#joinButton').addEventListener('click', function() {
+                    window.open("https://t.me/+RSjqR7v1laE1ZTJl", "_blank");
+                    closeModal();
+                });
+
+                modal.querySelector('#closeButton').addEventListener('click', function() {
+                    closeModal();
+                });
+
+                // close on backdrop click
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) {
+                        closeModal();
+                    }
+                });
+            }
+
+            // ----- main init -----
+            async function init() {
+                const channelId = getQueryParam("id");
+
+                if (!channelId) {
+                    document.getElementById('loading').style.display = 'none';
+                    const err = document.createElement('div');
+                    err.className = 'error';
+                    err.innerHTML = `
+                        <p>📺 <strong>FootyFeed Player</strong></p>
+                        <p>Add <code>?id=CHANNEL</code> to URL</p>
+                        <p style="margin:10px 0 6px;">Examples:</p>
+                        <p><a href="?id=PL1">?id=PL1</a> · <a href="?id=PL2">?id=PL2</a> · <a href="?id=UFC">?id=UFC</a></p>
+                        <p style="margin-top:14px;">Join <a href="https://t.me/+RSjqR7v1laE1ZTJl" target="_blank">@FootyFeed</a></p>
+                    `;
+                    document.body.appendChild(err);
+                    return;
+                }
+
+                document.getElementById('loading').textContent = `Loading ${channelId} …`;
+
+                const ok = await fetchStreams();
+                if (!ok || !streamsData || Object.keys(streamsData).length === 0) {
+                    document.getElementById('loading').style.display = 'none';
+                    const err = document.createElement('div');
+                    err.className = 'error';
+                    err.innerHTML = `
+                        <p>⚠️ Could not load stream data</p>
+                        <p>Network or server issue</p>
+                        <button class="retry-button" onclick="location.reload()">↻ Retry</button>
+                        <p style="margin-top:14px;"><a href="https://t.me/+RSjqR7v1laE1ZTJl" target="_blank">📢 Telegram support</a></p>
+                    `;
+                    document.body.appendChild(err);
+                    return;
+                }
+
+                // load the requested stream
+                loadIframe(channelId.toUpperCase());
+
+                // ----- SHOW CONFIRM DIALOG (once per session) after 1.5s -----
+                setTimeout(() => {
+                    showConfirmDialog();
+                }, 1500);
+
+                // ----- SHOW POPUP (ALWAYS, no session check) after 3.5s -----
+                setTimeout(() => {
+                    showPopup();
+                }, 3500);
+            }
+
+            // run
+            window.addEventListener('DOMContentLoaded', init);
+        })();
+    </script>
+</body>
+</html>
