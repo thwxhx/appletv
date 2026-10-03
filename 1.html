@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Live Stream - Footsters</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shaka-player@latest/dist/controls.css" crossorigin="anonymous" />
+  <script src="https://cdn.jsdelivr.net/npm/shaka-player@latest/dist/shaka-player.ui.js" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
+    .video-container, #player-wrap { position: absolute; inset: 0; background: #000; }
+    #video { width: 100%; height: 100%; }
+    
+    /* Hide default spinners */
+    .shaka-spinner-container, .shaka-buffering-spinner, .shaka-spinner { display: none !important; }
+
+    /* Custom UI CSS with absolute positioning and max z-indexes */
+    #status {
+      position: absolute; 
+      left: 12px; 
+      top: 60px; /* Safely away from bottom controls and top buttons */
+      z-index: 2147483647; /* Max z-index */
+      pointer-events: none; /* Allows clicking through it to the video */
+      color: rgba(255,255,255,0.92); background: rgba(0,0,0,0.58);
+      border: 1px solid rgba(255,255,255,0.18); border-radius: 8px;
+      padding: 6px 10px; font-size: 12px; max-width: 88vw;
+    }
+    #status:empty { display: none; }
+
+    #wm {
+      position: absolute; top: 12px; right: 12px; 
+      z-index: 2147483647; 
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,136,204,0.18); backdrop-filter: blur(8px);
+      border: 1px solid rgba(0,136,204,0.28); padding: 6px 11px;
+      border-radius: 7px; color: #fff; font-size: 12px; font-weight: 700;
+      text-decoration: none; transition: 0.2s;
+    }
+    #wm:hover { background: rgba(0,136,204,0.32); }
+
+    #tg-overlay, #source-overlay { 
+      position: absolute; inset: 0; 
+      z-index: 2147483646; 
+      background: rgba(0,0,0,0.65); 
+    }
+    
+    #tg-popup, #source-popup {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); 
+      z-index: 2147483647; 
+      width: min(360px, 92vw); background: #0e1526; border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 12px; padding: 16px; color: #fff; text-align: center;
+    }
+    #tg-popup h3, #source-popup h3 { font-size: 18px; margin-bottom: 6px; }
+    #tg-popup p, #source-popup p { font-size: 13px; color: rgba(255,255,255,0.8); margin-bottom: 12px; }
+    #tg-popup .row { display: flex; gap: 8px; justify-content: center; }
+    #tg-popup button { border: 0; border-radius: 8px; padding: 10px 12px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    #tg-join { background: #2ea6ff; color: #001426; }
+    #tg-join:hover { background: #4eb3ff; }
+    #tg-close { background: rgba(255,255,255,0.16); color: #fff; }
+    #tg-close:hover { background: rgba(255,255,255,0.26); }
+
+    .source-item {
+      width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: #fff;
+      padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-bottom: 8px;
+      text-align: left;
+    }
+    .source-item:hover { background: rgba(255,255,255,0.14); }
+    .source-meta { font-size: 11px; color: rgba(255,255,255,0.72); font-weight: 600; }
+
+    .hidden { display: none !important; }
+
+    #back-btn {
+      position: absolute; top: 12px; left: 12px; 
+      z-index: 2147483647; 
+      background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+      padding: 6px 11px; color: rgba(255,255,255,0.9); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: 0.2s; text-decoration: none;
+    }
+    #back-btn:hover { background: rgba(0,0,0,0.75); color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="video-container">
+    <div id="player-wrap" data-shaka-player-container>
+      <video autoplay muted playsinline data-shaka-player id="video"></video>
+      
+      <a href="#" id="back-btn">← Back</a>
+      <a href="https://t.me/+9Fp7JKDVI0ZhMWNl" target="_blank" id="wm">@vivosports</a>
+
+      <div id="tg-overlay"></div>
+      <div id="tg-popup">
+        <h3>The Footsters</h3>
+        <p>Join our Telegram for more stream links and updates.</p>
+        <div class="row">
+          <button id="tg-join" type="button">Join Telegram</button>
+          <button id="tg-close" type="button">Later</button>
+        </div>
+      </div>
+
+      <div id="source-overlay" class="hidden"></div>
+      <div id="source-popup" class="hidden">
+        <h3>Select Source</h3>
+        <p>Choose which stream to play.</p>
+        <div id="source-list"></div>
+      </div>
+
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <script>
+    const TG_URL = "https://t.me/+9Fp7JKDVI0ZhMWNl";
+    const API_URL = "https://foott.vercel.app/api/events";
+
+    let currentEvent = null;
+    let currentStream = null;
+    let player = null;
+    let ui = null;
+    let initStarted = false;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function showStatus(text) {
+      const s = document.getElementById("status");
+      if (s) s.textContent = text;
+    }
+
+    function onPlayerError(error) {
+      const code = error && error.code ? error.code : "UNKNOWN";
+      console.error("Shaka error", error);
+      showStatus("Stream failed (" + code + ")");
+    }
+
+    function initPopup() {
+      const overlay = document.getElementById("tg-overlay");
+      const popup = document.getElementById("tg-popup");
+      const closeBtn = document.getElementById("tg-close");
+      const joinBtn = document.getElementById("tg-join");
+
+      function hide() {
+        overlay.classList.add("hidden");
+        popup.classList.add("hidden");
+      }
+
+      overlay.addEventListener("click", hide);
+      closeBtn.addEventListener("click", hide);
+      joinBtn.addEventListener("click", () => {
+        window.open(TG_URL, "_blank", "noopener,noreferrer");
+        hide();
+      });
+
+      document.getElementById("back-btn").addEventListener("click", (e) => {
+        e.preventDefault();
+        window.location.href = "index.html";
+      });
+    }
+
+    function showSourcePicker(event) {
+      const overlay = document.getElementById("source-overlay");
+      const popup = document.getElementById("source-popup");
+      const list = document.getElementById("source-list");
+
+      list.innerHTML = event.streams
+        .map((stream, index) => {
+          const title = stream.title || `Stream ${index + 1}`;
+          const label = stream.drm ? "DRM" : "Direct";
+          return `
+            <button class="source-item" type="button" data-index="${index}">
+              <span>${escapeHtml(title)}</span>
+              <span class="source-meta">${label}</span>
+            </button>`;
+        })
+        .join("");
+
+      list.querySelectorAll("[data-index]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set("stream", button.getAttribute("data-index"));
+          window.location.href = nextUrl.toString();
+        });
+      });
+
+      overlay.classList.remove("hidden");
+      popup.classList.remove("hidden");
+    }
+
+    async function initPlayer() {
+      if (!window.shaka || !shaka.Player || !shaka.Player.isBrowserSupported()) {
+        showStatus("Browser not supported by Shaka");
+        return;
+      }
+
+      shaka.polyfill.installAll();
+
+      const video = document.getElementById("video");
+      const container = document.getElementById("player-wrap");
+      if (!video || !container) return;
+
+      if (!player) {
+        player = new shaka.Player(video);
+      }
+      if (!ui) {
+        ui = new shaka.ui.Overlay(player, container, video);
+      }
+
+      player.addEventListener("error", (ev) => onPlayerError(ev.detail));
+      if (ui && ui.getControls()) {
+        ui.getControls().addEventListener("error", (ev) => onPlayerError(ev.detail));
+      }
+
+      ui.configure({
+controlPanelElements: ["play_pause", "mute", "volume", "spacer", "time_and_duration", "overflow_menu", "fullscreen"]      });
+
+      const clearKeys = {};
+      if (currentStream && currentStream.drm) {
+        const kid = String(currentStream.drm.kid || "").toLowerCase().replace(/[^0-9a-f]/g, "");
+        const key = String(currentStream.drm.key || "").toLowerCase().replace(/[^0-9a-f]/g, "");
+        if (kid.length === 32 && key.length === 32) clearKeys[kid] = key;
+      }
+
+      player.configure({
+        drm: { clearKeys },
+        streaming: { bufferingGoal: 20, rebufferingGoal: 2, bufferBehind: 20 }
+      });
+
+      try {
+        await player.load(currentStream.url);
+        showStatus("");
+        video.muted = false;
+        await video.play().catch(() => {});
+      } catch (e) {
+        onPlayerError(e);
+      }
+    }
+
+    async function init() {
+      if (initStarted) return;
+      initStarted = true;
+
+      try {
+        const url = new URL(window.location.href);
+        const playId = url.searchParams.get("play");
+        const streamParam = url.searchParams.get("stream");
+        const streamIndex = streamParam === null ? NaN : parseInt(streamParam, 10);
+
+        if (!playId) {
+          window.location.href = "index.html";
+          return;
+        }
+
+        const response = await fetch(`${API_URL}?play=${encodeURIComponent(playId)}`);
+        if (!response.ok) throw new Error("Failed to fetch events");
+
+        const data = await response.json();
+        const events = Array.isArray(data.events) ? data.events : [];
+        currentEvent = events.find((e) => String(e.event_id) === String(playId));
+
+        if (!currentEvent) {
+          showStatus("Event not found");
+          return;
+        }
+
+        if (!Number.isInteger(streamIndex) || streamIndex < 0 || streamIndex >= currentEvent.streams.length) {
+          if ((currentEvent.streams || []).length > 1) {
+            showSourcePicker(currentEvent);
+            return;
+          }
+          currentStream = currentEvent.streams[0];
+        } else {
+          currentStream = currentEvent.streams[streamIndex];
+        }
+
+        initPopup();
+        await initPlayer();
+      } catch (error) {
+        console.error("Init error:", error);
+        showStatus("Error: " + error.message);
+      }
+    }
+
+    if ("wakeLock" in navigator) {
+      navigator.wakeLock.request("screen").catch(() => {});
+    }
+
+    document.addEventListener("shaka-ui-loaded", init);
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.shaka) init();
+    });
+    setTimeout(init, 1000);
+  </script>
+</body>
+</html>
